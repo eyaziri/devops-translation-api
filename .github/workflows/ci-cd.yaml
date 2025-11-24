@@ -24,8 +24,7 @@ jobs:
           pip install pytest requests
 
       - name: Run unit tests
-        run: |
-          python -m pytest tests/ -v
+        run: python -m pytest tests/ -v
 
       - name: Start API for endpoint testing
         run: |
@@ -72,10 +71,11 @@ jobs:
         run: |
           if [ -f bandit-report.json ]; then
             echo "📊 SAST Results Analysis:"
-            python << EOF
+            python << 'EOF'
 import json
 with open('bandit-report.json', 'r') as f:
     data = json.load(f)
+
 metrics = data['metrics']
 total_issues = len(data['results'])
 high_severity = len([r for r in data['results'] if r['issue_confidence'] == 'HIGH'])
@@ -113,8 +113,7 @@ EOF
         uses: actions/checkout@v3
 
       - name: Build Docker image
-        run: |
-          docker build -t translation-api:latest .
+        run: docker build -t translation-api:latest .
 
       - name: Test Docker image
         run: |
@@ -132,8 +131,7 @@ EOF
         uses: actions/checkout@v3
 
       - name: Build Docker image for DAST
-        run: |
-          docker build -t translation-api:dast .
+        run: docker build -t translation-api:dast .
 
       - name: Start API container for DAST
         run: |
@@ -170,31 +168,31 @@ EOF
         run: |
           if [ -f zap-report.json ]; then
             echo "📊 DAST Results Analysis:"
-            python << EOF
+            python << 'EOF'
 import json
 try:
     with open('zap-report.json', 'r') as f:
         data = json.load(f)
 
-site = data['site'][0]
-alerts = site['alerts']
-high_alerts = [a for a in alerts if a['risk'] == 'High']
-medium_alerts = [a for a in alerts if a['risk'] == 'Medium']
+    site = data['site'][0]
+    alerts = site['alerts']
+    high_alerts = [a for a in alerts if a['risk'] == 'High']
+    medium_alerts = [a for a in alerts if a['risk'] == 'Medium']
 
-print(f"Total alerts: {len(alerts)}")
-print(f"High risk alerts: {len(high_alerts)}")
-print(f"Medium risk alerts: {len(medium_alerts)}")
+    print(f"Total alerts: {len(alerts)}")
+    print(f"High risk alerts: {len(high_alerts)}")
+    print(f"Medium risk alerts: {len(medium_alerts)}")
 
-if high_alerts:
-    print("🚨 HIGH RISK ALERTS:")
-    for alert in high_alerts:
-        print(f"  - {alert['name']} (Confidence: {alert['confidence']})")
+    if high_alerts:
+        print("🚨 HIGH RISK ALERTS:")
+        for alert in high_alerts:
+            print(f"  - {alert['name']} (Confidence: {alert['confidence']})")
 
-if len(high_alerts) > 0:
-    print("❌ HIGH risk vulnerabilities found - Failing build")
-    exit(1)
-else:
-    print("✅ No HIGH risk vulnerabilities found")
+    if len(high_alerts) > 0:
+        print("❌ HIGH risk vulnerabilities found - Failing build")
+        exit(1)
+    else:
+        print("✅ No HIGH risk vulnerabilities found")
 
 except Exception as e:
     print(f"❌ Error analyzing ZAP report: {e}")
@@ -215,11 +213,11 @@ EOF
           retention-days: 30
 
       - name: Cleanup containers
+        if: always()
         run: |
           docker stop api-dast || true
           docker rm api-dast || true
           docker rmi translation-api:dast || true
-        if: always()
 
   deploy-kubernetes:
     runs-on: ubuntu-latest
@@ -273,13 +271,8 @@ EOF
           echo "Service URL: $SERVICE_URL"
 
           curl -s "$SERVICE_URL/metrics/prometheus" > prometheus-metrics.txt
-          echo "✅ Prometheus metrics captured"
-
           curl -s "$SERVICE_URL/metrics/detailed" > detailed-metrics.json
-          echo "✅ Detailed metrics captured"
-
           curl -s "$SERVICE_URL/health" > health-status.json
-          echo "✅ Health status captured"
 
           for i in {1..10}; do
             curl -s -X POST "$SERVICE_URL/translate" \
@@ -287,34 +280,29 @@ EOF
               -d '{"text": "hello world", "target_lang": "fr"}' > /dev/null &
           done
           wait
-          echo "✅ Test load generated"
+
+          echo "✅ Metrics captured"
 
       - name: Capture Kubernetes logs and metrics
         run: |
           echo "📝 Capturing Kubernetes logs and metrics..."
-
           kubectl get pods -n translation-app -o wide > k8s-pods-status.txt
           kubectl describe deployment translation-api -n translation-app > deployment-describe.txt
-
           kubectl logs -n translation-app deployment/translation-api --tail=50 > app-logs.txt
           kubectl logs -n translation-app deployment/redis --tail=20 > redis-logs.txt
-
           kubectl top pods -n translation-app --containers > resource-usage.txt
           kubectl get hpa -n translation-app > hpa-status.txt 2>/dev/null || echo "No HPA configured"
-
           kubectl get services -n translation-app > services-status.txt
           kubectl describe service translation-service -n translation-app > service-describe.txt
-
-          echo "✅ Kubernetes observability data captured"
+          echo "✅ Kubernetes data captured"
 
       - name: Capture performance metrics
         run: |
           echo "⚡ Capturing performance metrics..."
-
           SERVICE_URL=$(minikube service translation-service --url -n translation-app)
 
           start_time=$(date +%s%3N)
-          curl -s -o /dev/null -w "%{http_code}" "$SERVICE_URL/health"
+          curl -s -o /dev/null "$SERVICE_URL/health"
           end_time=$(date +%s%3N)
           echo "Health endpoint response time: $((end_time - start_time)) ms" > performance-metrics.txt
 
@@ -324,38 +312,17 @@ EOF
             -d '{"text": "performance test", "target_lang": "fr"}' > /dev/null
           end_time=$(date +%s%3N)
           echo "Translate endpoint response time: $((end_time - start_time)) ms" >> performance-metrics.txt
-
-          for i in {1..5}; do
-            time curl -s "$SERVICE_URL/metrics" > /dev/null &
-          done
-          wait
-
           echo "✅ Performance metrics captured"
 
       - name: Generate observability report
         run: |
           echo "📈 Generating observability report..."
+          cat > observability-report.md << 'EOF'
 
-          cat > observability-report.md << EOF
 $(cat detailed-metrics.json | python -m json.tool 2>/dev/null || echo "No detailed metrics")
 
-\`\`\`
-$(cat k8s-pods-status.txt)
-\`\`\`
 
-\`\`\`
-$(cat resource-usage.txt)
-\`\`\`
-
-\`\`\`
-$(cat performance-metrics.txt)
-\`\`\`
-
-\`\`\`
-$(tail -10 app-logs.txt)
-\`\`\`
 EOF
-
           echo "✅ Observability report generated"
 
       - name: Upload observability artifacts
@@ -407,21 +374,21 @@ EOF
     steps:
       - name: Generate final report
         run: |
-          cat > final-report.md << EOF
+          cat > final-report.md << 'EOF'
 
 - ✅ Tests: ${{ needs.test.result }}
 - ✅ SAST Security: ${{ needs.security-sast.result }}
 - ✅ Build Docker: ${{ needs.build-docker.result }}
 - ✅ DAST Security: ${{ needs.security-dast.result }}
-- ✅ Déploiement Kubernetes: ${{ needs.deploy-kubernetes.result }}
-- ✅ Push Docker Hub: ${{ needs.push-dockerhub.result }}
+- ✅ Kubernetes Deployment: ${{ needs.deploy-kubernetes.result }}
+- ✅ DockerHub Push: ${{ needs.push-dockerhub.result }}
 
-- Rapports SAST (Bandit)
-- Rapports DAST (OWASP ZAP)
-- Images Docker
-- Preuves de déploiement Kubernetes
+- SAST Reports (Bandit)
+- DAST Reports (OWASP ZAP)
+- Docker Images
+- Kubernetes Deployment Evidence
 
-- Nom: ${{ secrets.DOCKERHUB_USERNAME }}/translation-api
+- Name: ${{ secrets.DOCKERHUB_USERNAME }}/translation-api
 - Tags: latest, ${{ github.sha }}
 
 EOF
