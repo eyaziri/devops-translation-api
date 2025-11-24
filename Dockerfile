@@ -2,19 +2,19 @@
 
 WORKDIR /app
 
+# Installation de curl pour le healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# CORRECTION: Copier app.py au lieu de api.py
 COPY app.py .
-COPY prometheus_client /usr/local/lib/python3.11/site-packages/prometheus_client/
 
 EXPOSE 5001
 
-ENV REDIS_HOST=redis-service
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Healthcheck avec délai adapté
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:5001/health || exit 1
 
-# CORRECTION: Lancer app.py au lieu de api.py
+# Utilisation de l'exec form pour mieux gérer les signaux
 CMD ["python", "app.py"]
