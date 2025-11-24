@@ -25,7 +25,6 @@ jobs:
       
       - name: Test API startup
         run: |
-          cd src
           python -c "import app; print('✅ API imports successfully')"
 
   # JOB 2: Sécurité SAST
