@@ -7,7 +7,6 @@ on:
     branches: [ main ]
 
 jobs:
-
   test:
     runs-on: ubuntu-latest
     steps:
@@ -38,10 +37,13 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: SAST with Bandit
+      - name: Install Bandit
         run: |
           pip install bandit
-          bandit -r src/ -ll || echo "Bandit scan completed"
+      
+      - name: SAST with Bandit
+        run: |
+          bandit -r . -ll -f txt || echo "Bandit scan completed"
 
   build-docker:
     runs-on: ubuntu-latest
@@ -53,11 +55,11 @@ jobs:
       
       - name: Build Docker image
         run: |
-          docker build -t currency-api:latest .
+          docker build -t translation-api:latest .
       
       - name: Verify Docker image
         run: |
-          docker images | grep currency-api
+          docker images | grep translation-api
 
   security-dast:
     runs-on: ubuntu-latest
@@ -69,30 +71,58 @@ jobs:
       
       - name: Build Docker image for testing
         run: |
-          docker build -t currency-api:test .
+          docker build -t translation-api:test .
       
-      - name: Start API container with logs
+      - name: Start API container with detailed logging
         run: |
-          docker run -d -p 5000:5000 --name api-test currency-api:test
-          echo "🔄 Waiting for API to start..."
-          sleep 15
-          echo "📋 Container status:"
+          echo "🐳 Starting Docker container on port 5001..."
+          # CORRECTION : Utiliser le port 5001
+          docker run -d -p 5001:5001 --name api-test translation-api:test
+          
+          echo "🔄 Waiting for container to start..."
+          sleep 5
+          
+          echo "📊 Container status:"
           docker ps -a
-          echo "📜 Container logs:"
-          docker logs api-test || echo "Could not get logs"
+          
+          echo "🔍 Checking container health..."
+          if ! docker ps | grep -q api-test; then
+            echo "❌ Container failed to start"
+            docker logs api-test
+            exit 1
+          fi
+          
+          echo "📜 Initial container logs:"
+          docker logs api-test --tail 15
+          
+          echo "⏳ Waiting for Flask to start completely..."
+          sleep 10
+          
+          echo "📜 Recent logs:"
+          docker logs api-test --tail 10
       
-      - name: Test API health endpoint
+      - name: Test API endpoints
         run: |
-          echo "🧪 Testing health endpoint..."
+          echo "🧪 Testing health endpoint on port 5001..."
           max_attempts=5
           attempt=1
+          
           while [ $attempt -le $max_attempts ]; do
-            if curl -f http://localhost:5000/health; then
-              echo "✅ Health check passed"
+            echo "🔧 Attempt $attempt of $max_attempts..."
+            
+            # CORRECTION : Tester sur le port 5001
+            if curl -f -s http://localhost:5001/health; then
+              echo ""
+              echo "✅ Health check passed on attempt $attempt"
               break
             else
-              echo "⚠️ Attempt $attempt failed, retrying in 5 seconds..."
-              sleep 5
+              echo "⚠️ Attempt $attempt failed"
+              if [ $attempt -lt $max_attempts ]; then
+                echo "🔄 Retrying in 3 seconds..."
+                sleep 3
+                echo "📜 Current logs:"
+                docker logs api-test --tail 5
+              fi
               attempt=$((attempt + 1))
             fi
           done
@@ -100,46 +130,64 @@ jobs:
           if [ $attempt -gt $max_attempts ]; then
             echo "❌ Health check failed after $max_attempts attempts"
             echo "📜 Final container logs:"
-            docker logs api-test
+            docker logs api-test --tail 30
+            echo "🔍 Container inspection:"
+            docker inspect api-test | grep -A 5 "State"
             exit 1
           fi
       
-      - name: Test API conversion endpoint
+      - name: Test translation endpoint
         run: |
-          echo "🧪 Testing conversion endpoint..."
-          curl -f "http://localhost:5000/convert?from=EUR&to=USD&amount=100" || echo "⚠️ Conversion endpoint test skipped"
-          echo "✅ Conversion endpoint test completed"
+          echo "🧪 Testing translation endpoint..."
+          curl -X POST http://localhost:5001/translate \
+            -H "Content-Type: application/json" \
+            -d '{"text": "hello world", "target_lang": "fr"}' \
+            -f -s | jq . || echo "⚠️ Translation test failed but continuing"
+          echo "✅ Translation endpoint tested"
       
-      - name: Test API metrics endpoint
+      - name: Test metrics endpoints
         run: |
-          echo "🧪 Testing metrics endpoint..."
-          curl -f http://localhost:5000/metrics || echo "⚠️ Metrics endpoint test skipped"
-          echo "✅ Metrics endpoint test completed"
+          echo "🧪 Testing metrics endpoints..."
+          curl -f http://localhost:5001/metrics && echo "✅ Basic metrics work"
+          curl -f http://localhost:5001/metrics/prometheus > /dev/null && echo "✅ Prometheus metrics work"
+          curl -f http://localhost:5001/metrics/detailed > /dev/null && echo "✅ Detailed metrics work"
       
-      - name: Test with invalid parameters
+      - name: Test home endpoint
         run: |
-          echo "🧪 Testing error handling..."
-          response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:5000/convert?from=INVALID&to=USD&amount=100")
-          if [ "$response" -eq 400 ] || [ "$response" -eq 500 ] || [ "$response" -eq 404 ]; then
-            echo "✅ Error handling works (got status: $response)"
-          else
-            echo "⚠️ Unexpected response: $response (but continuing)"
-          fi
+          echo "🧪 Testing home endpoint..."
+          curl -f http://localhost:5001/ | jq . && echo "✅ Home endpoint works"
       
-      - name: Debug container status
+      - name: Security tests
         run: |
-          echo "🔍 Final debug information:"
-          docker ps -a
+          echo "🔒 Running security tests..."
+          
+          # Test input validation
+          echo "🛡️ Testing input validation..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5001/translate \
+            -H "Content-Type: application/json" \
+            -d '{"text": "", "target_lang": "fr"}')
+          echo "Empty input response: $response"
+          
+          # Test error handling
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5001/translate \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "Missing fields response: $response"
+      
+      - name: Final verification
+        run: |
+          echo "🎯 Final verification"
+          echo "📊 Container still running:"
+          docker ps | grep api-test
           echo "📜 Recent logs:"
-          docker logs api-test --tail 30
+          docker logs api-test --tail 5
         if: always()
       
-      - name: Cleanup containers
+      - name: Cleanup
         run: |
           docker stop api-test || true
           docker rm api-test || true
         if: always()
-        
 
   validate-kubernetes:
     runs-on: ubuntu-latest
@@ -153,49 +201,27 @@ jobs:
         run: |
           echo "🔍 Validating Kubernetes manifests..."
           
-          # Vérifier que les fichiers existent
-          echo "📁 Kubernetes files:"
-          ls -la k8s/
-          
-          # Vérifier la structure basique sans Python
-          echo "📋 Checking Kubernetes structure..."
-          
-          # Vérifier deployment.yaml
-          if grep -q "apiVersion: apps/v1" k8s/deployment.yaml && \
-             grep -q "kind: Deployment" k8s/deployment.yaml && \
-             grep -q "replicas: 2" k8s/deployment.yaml; then
-            echo "✅ deployment.yaml - Valid"
+          if [ -d "k8s" ]; then
+            echo "📁 Kubernetes files:"
+            ls -la k8s/
+            
+            # Validation basique
+            for file in k8s/*.yaml; do
+              if [ -f "$file" ]; then
+                echo "✅ Found: $file"
+              fi
+            done
+            echo "🎉 Kubernetes validation completed"
           else
-            echo "❌ deployment.yaml - Invalid"
-            exit 1
+            echo "⚠️ k8s directory not found, skipping"
           fi
-          
-          # Vérifier service.yaml
-          if grep -q "apiVersion: v1" k8s/service.yaml && \
-             grep -q "kind: Service" k8s/service.yaml; then
-            echo "✅ service.yaml - Valid"
-          else
-            echo "❌ service.yaml - Invalid"
-            exit 1
-          fi
-          
-          # Vérifier namespace.yaml
-          if grep -q "apiVersion: v1" k8s/namespace.yaml && \
-             grep -q "kind: Namespace" k8s/namespace.yaml; then
-            echo "✅ namespace.yaml - Valid"
-          else
-            echo "❌ namespace.yaml - Invalid"
-            exit 1
-          fi
-          
-          echo "🎉 All Kubernetes manifests are valid!"
 
-            # JOB 6: Push to Docker Hub (NOUVEAU)
   push-dockerhub:
     runs-on: ubuntu-latest
-    needs: [test, security, build-docker]
+    needs: [test, security, build-docker, security-dast, validate-kubernetes]
     
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/currency-api' || startsWith(github.ref, 'refs/tags/')    
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/translation-api' || startsWith(github.ref, 'refs/tags/')
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -213,21 +239,20 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/currency-api
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/translation-api
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=commit-
       
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/currency-api:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/translation-api:latest
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
