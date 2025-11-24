@@ -32,5 +32,12 @@ def test_prometheus_metrics():
     assert response.status_code == 200
     assert 'http_requests_total' in response.text
 
+def test_detailed_metrics():
+    response = requests.get(f"{BASE_URL}/metrics/detailed")
+    assert response.status_code == 200
+    data = response.json()
+    assert 'application_metrics' in data
+    assert 'system_metrics' in data
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
