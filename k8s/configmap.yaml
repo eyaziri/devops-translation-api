@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: translation-config
+  namespace: translation-app
+data:
+  REDIS_HOST: "redis-service"
