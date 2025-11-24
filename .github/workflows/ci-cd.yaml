@@ -30,7 +30,7 @@ jobs:
       
       - name: Start API for endpoint testing
         run: |
-          python api.py &
+          python app.py &
           sleep 5
           echo "🔄 API starting..."
       
