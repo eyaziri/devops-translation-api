@@ -48,7 +48,7 @@ jobs:
           echo "✅ Translate endpoint OK"
 
   # JOB 2: Sécurité SAST
-  security-sast:
+    security-sast:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -59,11 +59,45 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: SAST with Bandit
+      - name: Install Bandit and dependencies
         run: |
           pip install bandit
-          bandit -r . -f json -o bandit-report.json || true
-          bandit -r . -f html -o bandit-report.html || true
+          pip install -r requirements.txt
+      
+      - name: Run Bandit SAST Scan
+        run: |
+          echo "🔍 Running SAST scan with Bandit..."
+          bandit -r . -f json -o bandit-report.json -ll || true
+          bandit -r . -f html -o bandit-report.html -ll || true
+      
+      - name: Analyze Bandit results
+        run: |
+          if [ -f bandit-report.json ]; then
+            echo "📊 SAST Results Analysis:"
+            python << EOF
+          import json
+          with open('bandit-report.json', 'r') as f:
+              data = json.load(f)
+          metrics = data['metrics']
+          total_issues = len(data['results'])
+          high_severity = len([r for r in data['results'] if r['issue_confidence'] == 'HIGH'])
+          medium_severity = len([r for r in data['results'] if r['issue_confidence'] == 'MEDIUM'])
+          
+          print(f"Total issues found: {total_issues}")
+          print(f"High severity: {high_severity}")
+          print(f"Medium severity: {medium_severity}")
+          
+          # Fail if high severity issues found
+          if high_severity > 0:
+              print("❌ HIGH severity issues found - Failing build")
+              exit(1)
+          else:
+              print("✅ No HIGH severity issues found")
+          EOF
+          else
+            echo "❌ Bandit report not generated"
+            exit 1
+          fi
       
       - name: Upload SAST reports
         uses: actions/upload-artifact@v3
@@ -72,6 +106,7 @@ jobs:
           path: |
             bandit-report.json
             bandit-report.html
+          retention-days: 30
 
   # JOB 3: Build et test Docker
   build-docker:
@@ -95,7 +130,7 @@ jobs:
           docker stop api-test
 
   # JOB 4: Sécurité DAST
-  security-dast:
+    security-dast:
     runs-on: ubuntu-latest
     needs: build-docker
     
@@ -103,19 +138,80 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
+      - name: Build Docker image for DAST
+        run: |
+          docker build -t translation-api:dast .
+      
       - name: Start API container for DAST
         run: |
-          docker run -d -p 5001:5001 --name api-dast translation-api:latest
+          docker run -d -p 5001:5001 --name api-dast translation-api:dast
           echo "🔄 Waiting for API to start..."
-          sleep 15
+          sleep 20
+          echo "✅ API container started"
+          docker ps
       
-      - name: Run OWASP ZAP scan
+      - name: Wait for API to be ready
         run: |
-          docker run -v $(pwd):/zap/wrk/:rw -t owasp/zap2docker-stable zap-baseline.py \
-            -t http://host.docker.internal:5001/ \
-            -g gen.conf \
+          for i in {1..30}; do
+            if curl -s http://localhost:5001/health > /dev/null; then
+              echo "✅ API is ready for scanning"
+              break
+            fi
+            echo "⏳ Waiting for API... ($i/30)"
+            sleep 5
+          done
+      
+      - name: Run OWASP ZAP baseline scan
+        run: |
+          echo "🔍 Starting OWASP ZAP DAST scan..."
+          docker run --network host -v $(pwd):/zap/wrk/:rw -t owasp/zap2docker-stable zap-baseline.py \
+            -t http://localhost:5001/ \
+            -c zap-config.conf \
+            -I \
+            -j \
             -r zap-report.html \
-            -w zap-report.md || true
+            -w zap-report.md \
+            -J zap-report.json || echo "ZAP scan completed with warnings"
+      
+      - name: Analyze ZAP results
+        run: |
+          if [ -f zap-report.json ]; then
+            echo "📊 DAST Results Analysis:"
+            python << EOF
+          import json
+          try:
+              with open('zap-report.json', 'r') as f:
+                  data = json.load(f)
+          
+          site = data['site'][0]
+          alerts = site['alerts']
+          high_alerts = [a for a in alerts if a['risk'] == 'High']
+          medium_alerts = [a for a in alerts if a['risk'] == 'Medium']
+          
+          print(f"Total alerts: {len(alerts)}")
+          print(f"High risk alerts: {len(high_alerts)}")
+          print(f"Medium risk alerts: {len(medium_alerts)}")
+          
+          # Print high risk alerts
+          if high_alerts:
+              print("🚨 HIGH RISK ALERTS:")
+              for alert in high_alerts:
+                  print(f"  - {alert['name']} (Confidence: {alert['confidence']})")
+          
+          # Fail if high risk alerts found
+          if len(high_alerts) > 0:
+              print("❌ HIGH risk vulnerabilities found - Failing build")
+              exit(1)
+          else:
+              print("✅ No HIGH risk vulnerabilities found")
+              
+          except Exception as e:
+              print(f"❌ Error analyzing ZAP report: {e}")
+              exit(1)
+          EOF
+          else
+            echo "⚠️ ZAP report not found, continuing..."
+          fi
       
       - name: Upload DAST reports
         uses: actions/upload-artifact@v3
@@ -124,12 +220,15 @@ jobs:
           path: |
             zap-report.html
             zap-report.md
+            zap-report.json
+          retention-days: 30
       
-      - name: Cleanup
+      - name: Cleanup containers
         run: |
           docker stop api-dast || true
           docker rm api-dast || true
-
+          docker rmi translation-api:dast || true
+        if: always()
   # JOB 5: Déploiement Kubernetes
   deploy-kubernetes:
     runs-on: ubuntu-latest
@@ -164,7 +263,7 @@ jobs:
           echo "📊 Deployment evidence collected"
 
   # JOB 6: Observability Capture
-  observability-capture:
+   observability-capture:
     runs-on: ubuntu-latest
     needs: deploy-kubernetes
     
@@ -172,11 +271,144 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Capture metrics and logs
+      - name: Setup Kubernetes context
         run: |
-          kubectl get pods -n translation-app -o wide > observability-pods.txt
-          kubectl top pods -n translation-app > observability-resources.txt
-          echo "📈 Observability data captured"
+          minikube start --driver=docker
+          kubectl apply -f k8s/
+          sleep 60  # Wait for full deployment
+      
+      - name: Capture application metrics
+        run: |
+          echo "📊 Capturing application metrics..."
+          
+          # Get service URL
+          SERVICE_URL=$(minikube service translation-service --url -n translation-app)
+          echo "Service URL: $SERVICE_URL"
+          
+          # Capture Prometheus metrics
+          curl -s "$SERVICE_URL/metrics/prometheus" > prometheus-metrics.txt
+          echo "✅ Prometheus metrics captured"
+          
+          # Capture detailed metrics
+          curl -s "$SERVICE_URL/metrics/detailed" > detailed-metrics.json
+          echo "✅ Detailed metrics captured"
+          
+          # Capture health status
+          curl -s "$SERVICE_URL/health" > health-status.json
+          echo "✅ Health status captured"
+          
+          # Generate load for metrics
+          for i in {1..10}; do
+            curl -s -X POST "$SERVICE_URL/translate" \
+              -H "Content-Type: application/json" \
+              -d '{"text": "hello world", "target_lang": "fr"}' > /dev/null &
+          done
+          wait
+          echo "✅ Test load generated"
+      
+      - name: Capture Kubernetes logs and metrics
+        run: |
+          echo "📝 Capturing Kubernetes logs and metrics..."
+          
+          # Pod status and logs
+          kubectl get pods -n translation-app -o wide > k8s-pods-status.txt
+          kubectl describe deployment translation-api -n translation-app > deployment-describe.txt
+          
+          # Application logs
+          kubectl logs -n translation-app deployment/translation-api --tail=50 > app-logs.txt
+          kubectl logs -n translation-app deployment/redis --tail=20 > redis-logs.txt
+          
+          # Resource usage
+          kubectl top pods -n translation-app --containers > resource-usage.txt
+          kubectl get hpa -n translation-app > hpa-status.txt 2>/dev/null || echo "No HPA configured"
+          
+          # Service discovery
+          kubectl get services -n translation-app > services-status.txt
+          kubectl describe service translation-service -n translation-app > service-describe.txt
+          
+          echo "✅ Kubernetes observability data captured"
+      
+      - name: Capture performance metrics
+        run: |
+          echo "⚡ Capturing performance metrics..."
+          
+          # Simple performance test
+          SERVICE_URL=$(minikube service translation-service --url -n translation-app)
+          
+          # Test response times
+          start_time=$(date +%s%3N)
+          curl -s -o /dev/null -w "%{http_code}" "$SERVICE_URL/health"
+          end_time=$(date +%s%3N)
+          echo "Health endpoint response time: $((end_time - start_time)) ms" > performance-metrics.txt
+          
+          # Test translation endpoint
+          start_time=$(date +%s%3N)
+          curl -s -X POST "$SERVICE_URL/translate" \
+            -H "Content-Type: application/json" \
+            -d '{"text": "performance test", "target_lang": "fr"}' > /dev/null
+          end_time=$(date +%s%3N)
+          echo "Translate endpoint response time: $((end_time - start_time)) ms" >> performance-metrics.txt
+          
+          # Concurrent requests test
+          for i in {1..5}; do
+            time curl -s "$SERVICE_URL/metrics" > /dev/null &
+          done
+          wait
+          
+          echo "✅ Performance metrics captured"
+      
+      - name: Generate observability report
+        run: |
+          echo "📈 Generating observability report..."
+          
+          cat > observability-report.md << EOF
+          # Observability Report
+          ## Generated: $(date)
+          
+          ### Application Metrics Summary
+          $(cat detailed-metrics.json | python -m json.tool 2>/dev/null || echo "No detailed metrics")
+          
+          ### Kubernetes Status
+          \`\`\`
+          $(cat k8s-pods-status.txt)
+          \`\`\`
+          
+          ### Resource Usage
+          \`\`\`
+          $(cat resource-usage.txt)
+          \`\`\`
+          
+          ### Performance Metrics
+          \`\`\`
+          $(cat performance-metrics.txt)
+          \`\`\`
+          
+          ### Recent Application Logs (last 10 lines)
+          \`\`\`
+          $(tail -10 app-logs.txt)
+          \`\`\`
+          EOF
+          
+          echo "✅ Observability report generated"
+      
+      - name: Upload observability artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: observability-data
+          path: |
+            prometheus-metrics.txt
+            detailed-metrics.json
+            health-status.json
+            k8s-pods-status.txt
+            deployment-describe.txt
+            app-logs.txt
+            redis-logs.txt
+            resource-usage.txt
+            services-status.txt
+            service-describe.txt
+            performance-metrics.txt
+            observability-report.md
+          retention-days: 30
 
   # JOB 7: Push to Docker Hub
   push-dockerhub:
