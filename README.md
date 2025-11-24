@@ -2,7 +2,7 @@
 
 ## 📑 **RAPPORT FINAL - DevOps Project**
 
-```markdown
+
 # 📊 Rapport Final - Projet DevOps
 **API de Traduction avec Pipeline CI/CD Complète**
   
