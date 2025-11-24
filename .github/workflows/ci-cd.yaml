@@ -23,7 +23,7 @@ jobs:
           pip install -r requirements.txt
           pip install pytest requests
 
-      - name: Run unit tests                                
+      - name: Run unit tests
         run: |
           python -m pytest tests/ -v
 
@@ -214,7 +214,7 @@ EOF
             zap-report.json
           retention-days: 30
 
-      - name: Cleanup containers  
+      - name: Cleanup containers
         run: |
           docker stop api-dast || true
           docker rm api-dast || true
@@ -263,7 +263,7 @@ EOF
         run: |
           minikube start --driver=docker
           kubectl apply -f k8s/
-          sleep 60  
+          sleep 60
 
       - name: Capture application metrics
         run: |
@@ -337,8 +337,6 @@ EOF
           echo "📈 Generating observability report..."
 
           cat > observability-report.md << EOF
-
-
 $(cat detailed-metrics.json | python -m json.tool 2>/dev/null || echo "No detailed metrics")
 
 \`\`\`
