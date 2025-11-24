@@ -317,17 +317,18 @@ def home():
 if __name__ == '__main__':
     print("🚀 Starting Translation API with Advanced Observability...")
     print("📊 Endpoints:")
-    print("   POST http://localhost:5000/translate")
-    print("   GET  http://localhost:5000/metrics") 
-    print("   GET  http://localhost:5000/metrics/prometheus  ← NOUVEAU!")
-    print("   GET  http://localhost:5000/metrics/detailed    ← NOUVEAU!")
-    print("   GET  http://localhost:5000/health")
+    print("   POST http://localhost:5001/translate")  # ← Changé 5000 → 5001
+    print("   GET  http://localhost:5001/metrics")    # ← Changé 5000 → 5001
+    print("   GET  http://localhost:5001/metrics/prometheus")
+    print("   GET  http://localhost:5001/metrics/detailed")
+    print("   GET  http://localhost:5001/health")
     print("\n💡 Test Prometheus metrics:")
-    print('   curl http://localhost:5000/metrics/prometheus')
+    print('   curl http://localhost:5001/metrics/prometheus')  # ← Changé ici aussi
     print("\n🎯 Features added:")
     print("   ✅ Prometheus metrics integration")
     print("   ✅ Request counters and histograms")
     print("   ✅ Translation-specific metrics")
     print("   ✅ Error tracking by type")
     print("   ✅ Active requests monitoring")
+    
     app.run(host='0.0.0.0', port=5001, debug=False)
