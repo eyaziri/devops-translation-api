@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: translation-api
+  namespace: translation-app
+  labels:
+    app: translation-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: translation-api
+  template:
+    metadata:
+      labels:
+        app: translation-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5001"
+        prometheus.io/path: "/metrics/prometheus"
+    spec:
+      containers:
+      - name: translation-api
+        image: your-dockerhub-username/translation-api:latest
+        ports:
+        - containerPort: 5001
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: translation-config
+              key: REDIS_HOST
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
